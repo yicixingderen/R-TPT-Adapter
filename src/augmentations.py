@@ -2,8 +2,30 @@
 
 from __future__ import annotations
 
+import random
+
 from PIL import Image
 from torchvision import transforms
+from torchvision.transforms import functional as TF
+
+
+class LightingJitter:
+    """Sample lighting proxies; digital brightness approximates exposure."""
+
+    def __init__(self, exposure: bool = False, gamma: bool = False,
+                 contrast: bool = False):
+        self.exposure = exposure
+        self.gamma = gamma
+        self.contrast = contrast
+
+    def __call__(self, image: Image.Image) -> Image.Image:
+        if self.exposure:
+            image = TF.adjust_brightness(image, random.uniform(0.85, 1.15))
+        if self.gamma:
+            image = TF.adjust_gamma(image, random.uniform(0.85, 1.15))
+        if self.contrast:
+            image = TF.adjust_contrast(image, random.uniform(0.85, 1.15))
+        return image
 
 
 class ViewAugmenter:
@@ -41,5 +63,24 @@ def build_augmenter(name: str, n_views: int, augmix_augmenter=None):
         "photo": transforms.Compose([resize, transforms.CenterCrop(224), photo]),
         "flip": transforms.Compose([resize, transforms.CenterCrop(224), flips]),
         "crop_photo": transforms.Compose([crop, photo]),
+        "exposure": transforms.Compose([resize, transforms.CenterCrop(224),
+                                         LightingJitter(exposure=True)]),
+        "gamma": transforms.Compose([resize, transforms.CenterCrop(224),
+                                      LightingJitter(gamma=True)]),
+        "contrast": transforms.Compose([resize, transforms.CenterCrop(224),
+                                         LightingJitter(contrast=True)]),
+        "exposure_gamma": transforms.Compose(
+            [resize, transforms.CenterCrop(224),
+             LightingJitter(exposure=True, gamma=True)]),
+        "exposure_contrast": transforms.Compose(
+            [resize, transforms.CenterCrop(224),
+             LightingJitter(exposure=True, contrast=True)]),
+        "gamma_contrast": transforms.Compose(
+            [resize, transforms.CenterCrop(224),
+             LightingJitter(gamma=True, contrast=True)]),
+        "lighting": transforms.Compose([resize, transforms.CenterCrop(224),
+                                         LightingJitter(True, True, True)]),
+        "crop_lighting": transforms.Compose(
+            [crop, LightingJitter(True, True, True)]),
     }
     return ViewAugmenter(candidates[name], n_views)

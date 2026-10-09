@@ -21,7 +21,9 @@ from compare_neu import (cache_logits, choose_samples, image_path,
                          select_hyperparameters, set_tip_prompt, tune)
 
 
-CANDIDATES = ("augmix", "identity", "crop", "photo", "flip", "crop_photo")
+CANDIDATES = ("augmix", "identity", "crop", "photo", "flip", "crop_photo",
+              "exposure", "gamma", "contrast", "exposure_gamma",
+              "exposure_contrast", "gamma_contrast", "lighting", "crop_lighting")
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-test", action="store_true",
                         help="evaluate candidates on validation only")
     parser.add_argument("--candidates", nargs="+", choices=CANDIDATES,
-                        default=list(CANDIDATES))
+                        default=list(CANDIDATES[:6]))
     parser.add_argument("--output", type=Path,
                         default=Path("outputs/augmentation_search.json"))
     return parser.parse_args()
@@ -55,14 +57,18 @@ def seed_all(seed: int) -> None:
 def evaluate(entries: list, dataset_root: Path, transform, model,
              optimizer, initial_state: dict, weights: torch.Tensor,
              keys: torch.Tensor, values: torch.Tensor,
-             beta: float, alpha: float, name: str) -> dict:
+             beta: float, alpha: float, name: str,
+             input_transform=None) -> dict:
     correct = {"tip_adapter_f": 0, "tip_f_guided_r_tpt": 0}
     predictions = []
     similarity_total = 0.0
     original_weight_total = 0.0
     for index, entry in enumerate(entries, 1):
         with Image.open(image_path(dataset_root, entry)) as source:
-            views = transform(source.convert("RGB"))
+            image = source.convert("RGB")
+            if input_transform is not None:
+                image = input_transform(image)
+            views = transform(image)
         images = torch.stack(views).cuda()
         with torch.no_grad():
             features, _, _ = model.forward_features(images)
