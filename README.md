@@ -53,3 +53,24 @@ conda run -n tip_adapter python scripts/compare_neu.py --rtpt-root <R-TPT仓库>
 | 缓存引导 R-TPT | 87.78% | 86.11%（465/540） |
 
 统一模板后，验证集选中静态 Tip-Adapter；缓存引导方案在测试集少正确 13 张。逐图结果保存在本地 `outputs/neu_16shot_full_tip_prompt_seed0.json`。
+
+## Tip-Adapter-F 缓存实验
+
+原 Tip-Adapter 的 `main.py` 用测试集准确率保存最佳 F 轮次。为保持测试集独立，本仓库从 16-shot 缓存键初始化线性适配器，按原配置训练 20 轮，并只用验证集准确率（平局时用验证损失）选择轮次。训练图像只来自既有训练划分；权重写到忽略的 `outputs/`，不会覆盖原仓库缓存。
+
+```powershell
+conda run -n tip_adapter python scripts/train_tip_f.py --tip-root <Tip-Adapter仓库> --output outputs/tip_f_val_selected_16shot_seed1.pt
+conda run -n tip_adapter python scripts/compare_neu.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --rtpt-template tip --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --val-per-class 60 --test-per-class 90 --output outputs/neu_16shot_full_tip_f_guided_seed0.json
+```
+
+`--cache-weights` 用 F 适配器的权重替代原始缓存键，同时在验证集重新搜索 `beta` 和 `alpha`。输出分别包含静态 Tip-F、R-TPT 更新后融合 Tip-F，以及由 Tip-F 缓存分数引导提示更新三条路线。
+
+此次训练按验证集选中第 20 轮；后续网格搜索得到 `beta=0.6382`、`alpha=5.0`。统一提示、RN50、360 张验证图像和 540 张测试图像上的结果为：
+
+| 方法 | 验证集 | 测试集 |
+| --- | ---: | ---: |
+| 静态 Tip-F | **96.11%** | **93.15%（503/540）** |
+| R-TPT 更新后融合 Tip-F | 92.50% | 90.74%（490/540） |
+| Tip-F 缓存引导 R-TPT | 94.44% | 92.96%（502/540） |
+
+Tip-F 缓存引导方案比原始缓存引导方案测试准确率高 6.85 个百分点（多正确 37 张），但比静态 Tip-F 少正确 1 张。此次方法选择仍应是静态 Tip-F。该结果只覆盖一个划分、一个 F 训练种子和一个测试时增强种子；`outputs/neu_16shot_full_tip_f_guided_seed0.json` 保存了逐图预测。

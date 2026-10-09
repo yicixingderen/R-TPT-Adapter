@@ -23,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tip-root", type=Path, required=True)
     parser.add_argument("--dataset", default="NEU-CLS")
     parser.add_argument("--shots", type=int, default=16)
+    parser.add_argument("--cache-weights", type=Path,
+                        help="validation-selected Tip-Adapter-F checkpoint")
     parser.add_argument("--backbone", default="RN50")
     parser.add_argument("--rtpt-template", choices=["tip", "original"], default="tip",
                         help="text prompt used by the R-TPT branch")
@@ -111,8 +113,14 @@ def tune(model: torch.nn.Module, images: torch.Tensor, optimizer: torch.optim.Op
 def evaluate(entries: list, dataset_root: Path, transform, model: torch.nn.Module,
              optimizer: torch.optim.Optimizer, initial_state: dict,
              weights: torch.Tensor, keys: torch.Tensor, values: torch.Tensor,
-             beta: float, alpha: float, args: argparse.Namespace) -> dict:
-    methods = ["clip", "tip_adapter", "r_tpt", "r_tpt_plus_tip", "cache_guided_r_tpt"]
+             beta: float, alpha: float, args: argparse.Namespace,
+             cache_variant: str) -> dict:
+    if cache_variant == "tip_adapter_f":
+        methods = ["clip", "tip_adapter_f", "r_tpt", "r_tpt_plus_tip_f",
+                   "tip_f_guided_r_tpt"]
+    else:
+        methods = ["clip", "tip_adapter", "r_tpt", "r_tpt_plus_tip",
+                   "cache_guided_r_tpt"]
     correct = {method: 0 for method in methods}
     predictions = []
     for index, entry in enumerate(entries, 1):
@@ -174,7 +182,15 @@ def main() -> None:
     classnames = [next(entry[2] for entry in split["train"] if entry[1] == label)
                   for label in sorted({entry[1] for entry in split["train"]})]
 
-    keys = torch.load(cache_root / f"keys_{args.shots}shots.pt", map_location="cpu").float().cuda()
+    if args.cache_weights is None:
+        keys = torch.load(cache_root / f"keys_{args.shots}shots.pt", map_location="cpu").float().cuda()
+        cache_variant = "tip_adapter"
+        cache_epoch = None
+    else:
+        checkpoint = torch.load(args.cache_weights, map_location="cpu")
+        keys = checkpoint["weight"].T.float().cuda()
+        cache_variant = "tip_adapter_f"
+        cache_epoch = checkpoint["epoch"]
     values = torch.load(cache_root / f"values_{args.shots}shots.pt", map_location="cpu").float().cuda()
     val_features = torch.load(cache_root / "val_f.pt", map_location="cpu").float().cuda()
     val_labels = torch.load(cache_root / "val_l.pt", map_location="cpu").cuda()
@@ -198,12 +214,12 @@ def main() -> None:
     beta, alpha, cached_val_accuracy = select_hyperparameters(
         val_features, val_labels, weights, keys, values)
     print(f"Full cached validation set: beta={beta:.4f}, alpha={alpha:.4f}, "
-          f"Tip-Adapter={cached_val_accuracy * 100:.2f}%", flush=True)
+          f"{cache_variant}={cached_val_accuracy * 100:.2f}%", flush=True)
     with torch.no_grad():
         cached_test_logits = 100.0 * test_features @ weights
         cached_test_logits += alpha * cache_logits(test_features, keys, values, beta)
         cached_test_accuracy = cached_test_logits.argmax(1).eq(test_labels).float().mean().item() * 100
-    print(f"Full cached test set: Tip-Adapter={cached_test_accuracy:.2f}%", flush=True)
+    print(f"Full cached test set: {cache_variant}={cached_test_accuracy:.2f}%", flush=True)
 
     if args.rtpt_template == "tip":
         model = get_coop(args.backbone, classnames, 0, 3, "a_photo_of").cuda().eval()
@@ -229,16 +245,19 @@ def main() -> None:
     test_indices = [split["test"].index(entry) for entry in test_entries]
     cached_sample_accuracy = cached_test_logits[test_indices].argmax(1).eq(
         test_labels[test_indices]).float().mean().item() * 100
-    print(f"Selected cached test subset: Tip-Adapter={cached_sample_accuracy:.2f}%", flush=True)
+    print(f"Selected cached test subset: {cache_variant}={cached_sample_accuracy:.2f}%", flush=True)
     print("Evaluating sampled validation split", flush=True)
     validation = evaluate(val_entries, dataset_root, transform, model, optimizer,
-                          initial_state, weights, keys, values, beta, alpha, args)
+                          initial_state, weights, keys, values, beta, alpha, args,
+                          cache_variant)
     winner = max(validation["accuracy"], key=validation["accuracy"].get)
     print(f"Selected on sampled validation: {winner}", flush=True)
     print("Evaluating sampled test split", flush=True)
     test = evaluate(test_entries, dataset_root, transform, model, optimizer,
-                    initial_state, weights, keys, values, beta, alpha, args)
+                    initial_state, weights, keys, values, beta, alpha, args,
+                    cache_variant)
     report = {"dataset": args.dataset, "shots": args.shots, "backbone": args.backbone,
+              "cache_variant": cache_variant, "cache_epoch": cache_epoch,
               "rtpt_template": args.rtpt_template,
               "seed": args.seed, "views": args.views, "tta_steps": args.tta_steps,
               "selection_p": args.selection_p, "lr": args.lr, "beta": beta,
