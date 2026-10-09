@@ -16,6 +16,9 @@ import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.augmentations import build_augmenter
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -29,6 +32,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rtpt-template", choices=["tip", "original"], default="tip",
                         help="text prompt used by the R-TPT branch")
     parser.add_argument("--views", type=int, default=24)
+    parser.add_argument("--augmentation", default="augmix",
+                        choices=["augmix", "identity", "crop", "photo", "flip",
+                                 "crop_photo"])
     parser.add_argument("--tta-steps", type=int, default=1)
     parser.add_argument("--selection-p", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=0.005)
@@ -235,10 +241,13 @@ def main() -> None:
         parameter.requires_grad_("prompt_learner" in name)
     optimizer = torch.optim.AdamW(model.prompt_learner.parameters(), lr=args.lr)
     initial_state = optimizer.state_dict()
-    transform = AugMixAugmenter(
-        transforms.Compose([transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
-                            transforms.CenterCrop(224)]),
-        transforms.ToTensor(), n_views=args.views - 1, augmix=True)
+    original = transforms.Compose([
+        transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.CenterCrop(224)])
+    def augmix_factory(n_views: int):
+        return AugMixAugmenter(original, transforms.ToTensor(),
+                               n_views=n_views, augmix=True)
+    transform = build_augmenter(args.augmentation, args.views - 1, augmix_factory)
 
     val_entries = choose_samples(split["val"], args.val_per_class, args.seed)
     test_entries = choose_samples(split["test"], args.test_per_class, args.seed)
@@ -259,7 +268,8 @@ def main() -> None:
     report = {"dataset": args.dataset, "shots": args.shots, "backbone": args.backbone,
               "cache_variant": cache_variant, "cache_epoch": cache_epoch,
               "rtpt_template": args.rtpt_template,
-              "seed": args.seed, "views": args.views, "tta_steps": args.tta_steps,
+              "seed": args.seed, "views": args.views,
+              "augmentation": args.augmentation, "tta_steps": args.tta_steps,
               "selection_p": args.selection_p, "lr": args.lr, "beta": beta,
               "alpha": alpha, "cached_val_accuracy": cached_val_accuracy * 100,
               "cached_test_accuracy": cached_test_accuracy,

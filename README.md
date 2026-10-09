@@ -74,3 +74,34 @@ conda run -n tip_adapter python scripts/compare_neu.py --rtpt-root <R-TPT仓库>
 | Tip-F 缓存引导 R-TPT | 94.44% | 92.96%（502/540） |
 
 Tip-F 缓存引导方案比原始缓存引导方案测试准确率高 6.85 个百分点（多正确 37 张），但比静态 Tip-F 少正确 1 张。此次方法选择仍应是静态 Tip-F。该结果只覆盖一个划分、一个 F 训练种子和一个测试时增强种子；`outputs/neu_16shot_full_tip_f_guided_seed0.json` 保存了逐图预测。
+
+## 测试时图像变换搜索
+
+为检查 R-TPT 的 AugMix 是否适合 NEU-CLS，`scripts/search_augmentations.py` 固定了 Tip-F 权重、统一文本提示、24 视图、一次提示更新和缓存系数，只改变原图以外 23 个视图的生成方式：
+
+| 候选 | 增强视图 |
+| --- | --- |
+| `augmix` | 原 R-TPT 的随机裁剪、水平翻转及 AugMix 操作 |
+| `identity` | 与确定性原图视图相同，不施加随机变换 |
+| `crop` | 轻随机裁剪，面积比例 0.9–1.0、宽高比 0.95–1.05 |
+| `photo` | 固定几何预处理，随机轻亮度/对比度调整 |
+| `flip` | 固定几何预处理，随机水平/垂直翻转 |
+| `crop_photo` | 轻裁剪及轻亮度/对比度调整 |
+
+```powershell
+conda run -n tip_adapter python scripts/search_augmentations.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --val-per-class 60 --test-per-class 90 --seed 0 --output outputs/neu_augmentation_search_seed0.json
+conda run -n tip_adapter python scripts/search_augmentations.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --val-per-class 60 --seed 1 --skip-test --output outputs/neu_augmentation_search_seed1_val.json
+```
+
+| 变换 | 验证集种子 0 | 验证集种子 1 |
+| --- | ---: | ---: |
+| AugMix | 336/360 | 339/360 |
+| 重复原图 | **345/360** | **345/360** |
+| 轻裁剪 | 343/360 | 343/360 |
+| 轻光照 | 343/360 | 341/360 |
+| 翻转 | 342/360 | 341/360 |
+| 轻裁剪＋轻光照 | 342/360 | 343/360 |
+
+因此在这六组候选中，验证集选择 `identity`。其独立测试集准确率为 502/540（92.96%），静态 Tip-F 为 503/540（93.15%）。重复原图虽然改善了相对于 AugMix 的验证表现，但测试时提示更新仍未超过静态 Tip-F。AugMix 增强视图与原图的平均图像特征余弦相似度为 0.894，其他轻变换约为 0.983–0.993；这与强变换可能扰动缺陷纹理线索的解释一致，但单次数据划分不能证明因果关系。
+
+`compare_neu.py` 也支持 `--augmentation identity` 等候选值，便于直接运行选中的结合方案；默认仍为 `augmix`，以保留早期实验的复现入口。当前最高的独立测试准确率仍来自**静态 Tip-F**，因此它是现阶段的推荐推理方式。
