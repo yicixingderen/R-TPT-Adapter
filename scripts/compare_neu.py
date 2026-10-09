@@ -24,6 +24,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="NEU-CLS")
     parser.add_argument("--shots", type=int, default=16)
     parser.add_argument("--backbone", default="RN50")
+    parser.add_argument("--rtpt-template", choices=["tip", "original"], default="tip",
+                        help="text prompt used by the R-TPT branch")
     parser.add_argument("--views", type=int, default=24)
     parser.add_argument("--tta-steps", type=int, default=1)
     parser.add_argument("--selection-p", type=float, default=0.1)
@@ -70,6 +72,20 @@ def select_hyperparameters(features: torch.Tensor, labels: torch.Tensor,
 def image_path(dataset_root: Path, entry: list) -> Path:
     relative = entry[0].lstrip("\\/").replace("\\", "/")
     return dataset_root / relative
+
+
+def set_tip_prompt(model: torch.nn.Module, classnames: list,
+                   clip_module, token_embedding: torch.nn.Module) -> None:
+    """Insert Tip-Adapter's fixed class suffix after R-TPT's tunable context."""
+    learner = model.prompt_learner
+    prompts = [f"a photo of {name}, a type of steel surface defect." for name in classnames]
+    tokenized = torch.cat([clip_module.tokenize(prompt) for prompt in prompts])
+    with torch.no_grad():
+        embeddings = token_embedding(tokenized).to(device=learner.ctx.device,
+                                                   dtype=learner.dtype)
+        learner.token_prefix = embeddings[:, :1, :]
+        learner.token_suffix = embeddings[:, 1 + learner.n_ctx:, :]
+        learner.tokenized_prompts = tokenized.to(learner.ctx.device)
 
 
 def tune(model: torch.nn.Module, images: torch.Tensor, optimizer: torch.optim.Optimizer,
@@ -179,8 +195,6 @@ def main() -> None:
             feature = text_model.encode_text(tokens).float()
             text_features.append(F.normalize(feature, dim=-1).squeeze(0))
         weights = torch.stack(text_features, dim=1).cuda()
-    del text_model
-
     beta, alpha, cached_val_accuracy = select_hyperparameters(
         val_features, val_labels, weights, keys, values)
     print(f"Full cached validation set: beta={beta:.4f}, alpha={alpha:.4f}, "
@@ -191,7 +205,16 @@ def main() -> None:
         cached_test_accuracy = cached_test_logits.argmax(1).eq(test_labels).float().mean().item() * 100
     print(f"Full cached test set: Tip-Adapter={cached_test_accuracy:.2f}%", flush=True)
 
-    model = get_coop(args.backbone, classnames, 0, 4, "a_photo_of_a").cuda().eval()
+    if args.rtpt_template == "tip":
+        model = get_coop(args.backbone, classnames, 0, 3, "a_photo_of").cuda().eval()
+        set_tip_prompt(model, classnames, clip, text_model.token_embedding)
+        with torch.no_grad():
+            prompt_weights = F.normalize(model.get_text_features().float(), dim=-1)
+            agreement = F.cosine_similarity(prompt_weights, weights.T, dim=-1).min().item()
+        print(f"Initial R-TPT/Tip text feature minimum cosine: {agreement:.6f}", flush=True)
+    else:
+        model = get_coop(args.backbone, classnames, 0, 4, "a_photo_of_a").cuda().eval()
+    del text_model
     for name, parameter in model.named_parameters():
         parameter.requires_grad_("prompt_learner" in name)
     optimizer = torch.optim.AdamW(model.prompt_learner.parameters(), lr=args.lr)
@@ -216,6 +239,7 @@ def main() -> None:
     test = evaluate(test_entries, dataset_root, transform, model, optimizer,
                     initial_state, weights, keys, values, beta, alpha, args)
     report = {"dataset": args.dataset, "shots": args.shots, "backbone": args.backbone,
+              "rtpt_template": args.rtpt_template,
               "seed": args.seed, "views": args.views, "tta_steps": args.tta_steps,
               "selection_p": args.selection_p, "lr": args.lr, "beta": beta,
               "alpha": alpha, "cached_val_accuracy": cached_val_accuracy * 100,
