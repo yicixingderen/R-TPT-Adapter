@@ -116,20 +116,31 @@ conda run -n tip_adapter python scripts/search_augmentations.py --rtpt-root <R-T
 
 ```powershell
 conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 10 --seed 0 --output outputs/lighting_screen_seed0.json
-conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 0 --candidates identity crop photo exposure gamma contrast lighting crop_lighting --output outputs/lighting_full_val_seed0.json
-conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 1 --candidates contrast crop identity gamma --output outputs/lighting_full_val_seed1.json
-conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split test --per-class 90 --seed 0 --conditions clean dim bright gamma_dark low_contrast dim_low_contrast --candidates contrast --output outputs/lighting_test_contrast_seed0.json
+conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 0 --output outputs/lighting_val_all_seed0.json
+conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 1 --candidates contrast crop identity gamma gamma_contrast crop_photo --output outputs/lighting_val_finalists_seed1.json
+conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split test --per-class 90 --seed 0 --conditions clean dim bright gamma_dark low_contrast dim_low_contrast --candidates gamma_contrast --output outputs/lighting_test_gamma_contrast_seed0.json
 ```
 
-测试种子 1 使用最后一条命令并将 `--seed` 改为 `1`、输出名改为 `lighting_test_contrast_seed1.json`。所有输出保存在忽略的 `outputs/`，包含逐图预测。初筛比较 12 个候选；完整验证比较 8 个；种子 1 复核验证集前 4 个。按五个条件的总正确数选择，静态 Tip-F 为 1647/1800；对比度视图在种子 0、1 分别为 1654/1800、1651/1800，轻裁剪分别为 1653/1800、1650/1800。对比度视图以很小的差距胜出。
+测试种子 1 使用最后一条命令并将 `--seed` 改为 `1`、输出名改为 `lighting_test_gamma_contrast_seed1.json`。本地实际全量验证输出因续跑分存在 `lighting_full_val_seed0.json`、`lighting_remaining_full_val_seed0.json`、`lighting_remaining_low_contrast_seed0.json`、`lighting_full_val_seed1.json` 和 `lighting_remaining_full_val_seed1.json`；这些文件连同逐图预测均在忽略的 `outputs/`。上述命令可以一次性重现同样的候选矩阵。初筛和完整验证都覆盖 12 个候选，种子 1 复核验证集成绩接近领先的 6 个候选。选型只计算五个验证条件的总正确数。
 
-| 测试条件 | 静态 Tip-F | 对比度视图 R-TPT，种子 0 | 种子 1 |
-| --- | ---: | ---: | ---: |
-| 干净 | **503/540** | 500/540 | 500/540 |
-| 变暗 | 467/540 | **471/540** | **471/540** |
-| 变亮 | 492/540 | **496/540** | **495/540** |
-| 伽马变暗 | 481/540 | **483/540** | 481/540 |
-| 低对比度 | 492/540 | **494/540** | **493/540** |
-| 变暗＋低对比度（未参与选型） | **415/540** | 413/540 | 413/540 |
+| 验证集五条件合计 | 种子 0 | 种子 1 |
+| --- | ---: | ---: |
+| 静态 Tip-F | 1647/1800 | 1647/1800 |
+| 单独对比度视图 | 1654/1800 | 1651/1800 |
+| 轻裁剪 | 1653/1800 | 1650/1800 |
+| **伽马＋对比度视图** | **1653/1800** | **1656/1800** |
+| 轻裁剪＋旧亮度/对比度 | 1649/1800 | 1653/1800 |
 
-六个条件的测试总正确数为静态 Tip-F 2850/3240、对比度视图 R-TPT 2857/3240 和 2853/3240。它在四个单因素光照偏移上有小幅收益，但干净图像和未参与选型的复合偏移更差；同一批图像在多个条件下重复评估，总计数不能视为 3240 张独立图像。当前结果不足以证明真实工业光照下的提升，干净图像仍建议静态 Tip-F。
+两个种子合计，伽马＋对比度为 3309/3600，单独对比度为 3305/3600；完整 12 候选验证结果见结项实验记录。按验证集选择前者，再测试它。单独对比度曾在补齐另外四个候选之前先行测试，其结果保留作探索性比较，不参与最终选型。
+
+| 独立测试条件 | 静态 Tip-F | 伽马＋对比度种子 0 | 种子 1 | 单独对比度种子 0 / 1 |
+| --- | ---: | ---: | ---: | ---: |
+| 干净 | 503/540 | 505/540 | 505/540 | 500 / 500 |
+| 变暗 | 467/540 | 467/540 | 468/540 | 471 / 471 |
+| 变亮 | 492/540 | 494/540 | 495/540 | 496 / 495 |
+| 伽马变暗 | 481/540 | 479/540 | 480/540 | 483 / 481 |
+| 低对比度 | 492/540 | 491/540 | 493/540 | 494 / 493 |
+| 变暗＋低对比度（未参与选型） | 415/540 | 417/540 | 414/540 | 413 / 413 |
+| 六条件合计 | 2850/3240 | 2853/3240 | 2855/3240 | 2857 / 2853 |
+
+验证集选中的组合在测试集只比静态 Tip-F 多正确 3 和 5 次，且伽马变暗条件均略差。单独对比度的测试合计与它接近，不能据此反向重选方案。同一批 540 张图像在六个条件下重复评估，总计数不是 3240 张独立图像。合成偏移不能替代真实产线数据；当前没有证据支持将任一 R-TPT 组合替代静态 Tip-F 用于工业部署。
