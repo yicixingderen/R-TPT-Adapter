@@ -144,3 +144,30 @@ conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓
 | 六条件合计 | 2850/3240 | 2853/3240 | 2855/3240 | 2857 / 2853 |
 
 验证集选中的组合在测试集只比静态 Tip-F 多正确 3 和 5 次，且伽马变暗条件均略差。单独对比度的测试合计与它接近，不能据此反向重选方案。同一批 540 张图像在六个条件下重复评估，总计数不是 3240 张独立图像。合成偏移不能替代真实产线数据；当前没有证据支持将任一 R-TPT 组合替代静态 Tip-F 用于工业部署。
+
+## 强明暗变化与局部反光压力测试
+
+`src/lighting_conditions.py` 增加五种固定扰动，分别对应全局亮度乘 0.55、全局亮度乘 1.55、局部白色椭圆反光，以及反光分别叠加两种全局亮度变化。反光中心由原图字节的哈希确定，同一张图像在各叠加条件下位置相同。亮斑的水平和垂直尺度分别为图像宽、高的 0.16 和 0.11；中心区域的像素会饱和到白色。扰动先作用于原始图像，然后生成 Tip-F 和 R-TPT 使用的视图。它是数字合成的压力测试，不是实拍钢材反射光的物理模型。
+
+用 `scripts/search_lighting.py` 的 `--conditions dark_strong bright_strong glare dark_glare bright_glare` 重现。上一轮表现较好的 `identity`、`crop`、`contrast`、`gamma_contrast` 为候选，每个候选都与相同扰动图像上的静态 Tip-F 比较。固定 16-shot Tip-F 权重、统一语言提示、RN50、24 视图、一次提示更新和验证集选出的缓存系数。验证集每类 60 张；根据五条件合计正确数选择方法，然后在独立测试集每类 90 张上评估。
+
+```powershell
+conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 0 --conditions dark_strong bright_strong glare dark_glare bright_glare --candidates identity crop contrast gamma_contrast --output outputs/strong_lighting_val_seed0.json
+```
+
+种子 1 只复核验证集前两名；按两种种子的验证集总正确数，固定选择 `gamma_contrast`。独立测试集同时保留 `contrast` 作为预定次优对照：
+
+```powershell
+conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 1 --conditions dark_strong bright_strong glare dark_glare bright_glare --candidates contrast gamma_contrast --output outputs/strong_lighting_val_seed1_finalists.json
+conda run -n tip_adapter python scripts/search_lighting.py --rtpt-root <R-TPT仓库> --tip-root <Tip-Adapter仓库> --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split test --per-class 90 --seed 0 --conditions dark_strong bright_strong glare dark_glare bright_glare --candidates contrast gamma_contrast --output outputs/strong_lighting_test_seed0.json
+```
+
+| 方案 | 验证集五条件，种子 0 | 验证集五条件，种子 1 | 测试集五条件，种子 0 |
+| --- | ---: | ---: | ---: |
+| 静态 Tip-F | 1206/1800 | 1206/1800 | 1811/2700 |
+| 重复原图 | 1199/1800 | 未复核 | 未测试 |
+| 轻裁剪 | 1244/1800 | 未复核 | 未测试 |
+| 轻对比度 | 1266/1800 | 1269/1800 | 1905/2700 |
+| **伽马＋对比度** | **1281/1800** | **1282/1800** | **1917/2700** |
+
+测试集伽马加对比度方案逐条件为：强变暗 414/540、强变亮 437/540、局部反光 399/540、强变暗加反光 276/540、强变亮加反光 391/540；相同条件下静态 Tip-F 为 408、430、358、261、354。合计提高 106/2700 次判断，但最难的强变暗加反光准确率仍只有 51.11%。各条件复用同一批图像，合计并非独立图像数；这一压力测试不能代表真实产线反光。完整逐图预测及两类样例的扰动预览分别在忽略版本控制的 `outputs/strong_lighting_*.json`、`outputs/lighting_conditions_preview.png` 中。

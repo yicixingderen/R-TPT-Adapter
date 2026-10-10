@@ -17,12 +17,14 @@ from torchvision.transforms import functional as TF
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.augmentations import build_augmenter
+from src.lighting_conditions import apply_condition
 from compare_neu import choose_samples, select_hyperparameters, set_tip_prompt
 from search_augmentations import CANDIDATES, evaluate, seed_all
 
 
 CONDITIONS = ("clean", "dim", "bright", "gamma_dark", "low_contrast",
-              "dim_low_contrast")
+              "dim_low_contrast", "dark_strong", "bright_strong", "glare",
+              "dark_glare", "bright_glare")
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +64,9 @@ def condition_transform(name: str) -> Callable[[Image.Image], Image.Image]:
     if name == "dim_low_contrast":
         return lambda image: ImageEnhance.Contrast(
             ImageEnhance.Brightness(image).enhance(0.70)).enhance(0.70)
+    if name in ("dark_strong", "bright_strong", "glare", "dark_glare",
+                "bright_glare"):
+        return lambda image: apply_condition(image, name)
     raise ValueError(name)
 
 
