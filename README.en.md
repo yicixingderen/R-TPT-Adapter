@@ -42,9 +42,9 @@ data/NEU-CLS/
 └── Sc/   scratches
 ```
 
-The split file is `data/NEU-CLS/split_NEUCLS.json`. It contains `train`, `val`, and `test` arrays, each with entries shaped `[relative image path, class index, English class name]`. Class indices are `Cr=0`, `In=1`, `PS=2`, `Pa=3`, `RS=4`, and `Sc=5`. The next section creates a 50%/20%/30% split with seed 1 when the file is absent; an existing split is read directly.
+The split file is `data/NEU-CLS/split_NEUCLS.json`. It contains `train`, `val`, and `test` arrays, each with entries shaped `[relative image path, class index, English class name]`. Class indices are `Cr=0`, `In=1`, `PS=2`, `Pa=3`, `RS=4`, and `Sc=5`. NEU-CLS has 300 images per class. When the split file is absent, the next section sorts filenames and creates a 150/60/90 train/validation/test split per class with seed 1; an existing split is read directly.
 
-The recorded experiment numbers use their original split and a cache built from that split. Place those inputs in the data and cache directories described here to reproduce that run.
+The recorded experiment numbers use their original split and a cache built from that split. Follow the existing-cache steps below when using those inputs.
 
 Download the [OpenAI CLIP RN50 weights](https://github.com/openai/CLIP/blob/main/clip/clip.py):
 
@@ -63,7 +63,7 @@ python scripts/prepare_neu_cache.py --create-split --model-path checkpoints/RN50
 python scripts/check_setup.py --stage train --model-path checkpoints/RN50.pt --shots 16
 ```
 
-The cache is written to `outputs/cache/NEU-CLS/`: `keys_16shots.pt`, `values_16shots.pt`, `val_f.pt`, `val_l.pt`, `test_f.pt`, and `test_l.pt`. Use `--cache-dir` to point every command to an existing cache and `--data-root` to select another data location.
+The cache is written to `outputs/cache/NEU-CLS/`: `keys_16shots.pt`, `values_16shots.pt`, `val_f.pt`, `val_l.pt`, `test_f.pt`, and `test_l.pt`. When using an existing cache, skip the cache-generation command and start with `check_setup.py --stage train`. Use `--cache-dir` to point every command to an existing cache and `--data-root` to select another data location.
 
 ## Train
 
@@ -84,11 +84,11 @@ Compare static Tip-Adapter-F, R-TPT, and two fusion placements:
 python scripts/compare_neu.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --rtpt-template tip --val-per-class 60 --test-per-class 90 --seed 0 --output outputs/neu_comparison.json
 ```
 
-Then evaluate gamma-and-contrast cache-guided R-TPT with 24 views. The four conditions are strong darkening, strong brightening, local glare, and strong brightening with glare:
+Then evaluate gamma-and-contrast cache-guided R-TPT with 24 views. The five conditions are strong darkening, strong brightening, local glare, strong darkening with glare, and strong brightening with glare:
 
 ```powershell
-python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 0 --conditions dark_strong bright_strong glare bright_glare --candidates gamma_contrast --output outputs/lighting_val.json
-python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split test --per-class 90 --seed 0 --conditions dark_strong bright_strong glare bright_glare --candidates gamma_contrast --output outputs/lighting_test.json
+python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 0 --conditions dark_strong bright_strong glare dark_glare bright_glare --candidates gamma_contrast --output outputs/lighting_val.json
+python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split test --per-class 90 --seed 0 --conditions dark_strong bright_strong glare dark_glare bright_glare --candidates gamma_contrast --output outputs/lighting_test.json
 ```
 
 All entry points read `third_party/R-TPT`, `third_party/Tip-Adapter`, `data/NEU-CLS`, and `outputs/cache/NEU-CLS` by default. Use `--rtpt-root`, `--tip-root`, `--data-root`, and `--cache-dir` for other locations. `--model-path` selects the RN50 weight file.

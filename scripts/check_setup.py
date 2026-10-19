@@ -15,6 +15,7 @@ from src.paths import add_path_arguments
 
 
 RN50_SHA256 = "afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762"
+EXPECTED_COUNTS = {"train": 150, "val": 60, "test": 90}
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,14 +88,17 @@ def main() -> None:
                 raise FileNotFoundError(folder)
             count = sum(path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
                         for path in folder.iterdir())
-            if count < args.shots * 2:
-                raise ValueError(f"Insufficient images for {args.shots} shots: {folder}")
+            if count != 300:
+                raise ValueError(f"Expected 300 NEU-CLS images in {folder}, found {count}")
         print("NEU-CLS image directories: ready for split creation")
         return
     split = load_split(args.data_root, check_images=True)
-    counts = Counter(entry[1] for entry in split["train"])
-    if set(counts) != set(range(6)) or min(counts.values()) < args.shots:
-        raise ValueError("Training split has fewer than --shots images in a class")
+    for section, expected in EXPECTED_COUNTS.items():
+        counts = Counter(entry[1] for entry in split[section])
+        if any(counts[label] != expected for label in range(6)):
+            raise ValueError(f"Expected {expected} images per class in {section}")
+    if args.shots > EXPECTED_COUNTS["train"]:
+        raise ValueError("--shots exceeds the training images per class")
     print("NEU-CLS split and images: ready")
     if args.stage == "prepare":
         return
@@ -105,14 +109,20 @@ def main() -> None:
                for name, path in files.items()}
     keys = tensors[f"keys_{args.shots}shots.pt"]
     values = tensors[f"values_{args.shots}shots.pt"]
-    if keys.ndim != 2 or values.shape != (keys.shape[1], 6):
+    if (keys.ndim != 2 or keys.shape[1] != args.shots * 6
+            or values.shape != (keys.shape[1], 6)):
         raise ValueError("Cache key/value shapes do not match")
+    if not torch.all((values == 0) | (values == 1)) or not torch.all(values.sum(1) == 1):
+        raise ValueError("Cache values must contain one-hot class labels")
     for section in ("val", "test"):
         features = tensors[f"{section}_f.pt"]
         labels = tensors[f"{section}_l.pt"]
         if (features.ndim != 2 or features.shape[1] != keys.shape[0]
                 or len(features) != len(labels) or len(labels) != len(split[section])):
             raise ValueError(f"{section} feature/label shapes do not match split")
+        expected_labels = torch.tensor([entry[1] for entry in split[section]])
+        if not torch.equal(labels.long(), expected_labels):
+            raise ValueError(f"{section} cache labels do not match split order")
     print("Cache tensors: ready")
     if args.stage == "train":
         return

@@ -42,9 +42,9 @@ data/NEU-CLS/
 └── Sc/   scratches
 ```
 
-划分文件采用 `data/NEU-CLS/split_NEUCLS.json`，包含 `train`、`val`、`test` 三组，每条记录为 `[相对图像路径, 类别编号, 英文类别名]`。类别编号依次为 `Cr=0`、`In=1`、`PS=2`、`Pa=3`、`RS=4`、`Sc=5`。下节命令会在没有划分文件时按种子 1 生成 50%/20%/30% 的划分；已有划分文件会直接使用。
+划分文件采用 `data/NEU-CLS/split_NEUCLS.json`，包含 `train`、`val`、`test` 三组，每条记录为 `[相对图像路径, 类别编号, 英文类别名]`。类别编号依次为 `Cr=0`、`In=1`、`PS=2`、`Pa=3`、`RS=4`、`Sc=5`。NEU-CLS 每类有 300 张图像。下节命令会在没有划分文件时先按文件名排序，再按种子 1 生成每类 150/60/90 张的训练、验证和测试划分；已有划分文件会直接使用。
 
-历史实验数字对应当时使用的划分和同一划分生成的缓存。复现该组数字时，将这些输入放在上述数据目录和下述缓存目录。
+历史实验数字对应当时使用的划分和同一划分生成的缓存。使用这组输入时，按下文的已有缓存步骤执行。
 
 下载 [OpenAI CLIP RN50 权重](https://github.com/openai/CLIP/blob/main/clip/clip.py)：
 
@@ -63,7 +63,7 @@ python scripts/prepare_neu_cache.py --create-split --model-path checkpoints/RN50
 python scripts/check_setup.py --stage train --model-path checkpoints/RN50.pt --shots 16
 ```
 
-缓存写入 `outputs/cache/NEU-CLS/`，包括 `keys_16shots.pt`、`values_16shots.pt`、`val_f.pt`、`val_l.pt`、`test_f.pt` 和 `test_l.pt`。已有缓存可通过各命令的 `--cache-dir` 指定；数据位置通过 `--data-root` 指定。
+缓存写入 `outputs/cache/NEU-CLS/`，包括 `keys_16shots.pt`、`values_16shots.pt`、`val_f.pt`、`val_l.pt`、`test_f.pt` 和 `test_l.pt`。使用已有缓存时，跳过缓存生成命令，从 `check_setup.py --stage train` 开始执行。已有缓存可通过各命令的 `--cache-dir` 指定；数据位置通过 `--data-root` 指定。
 
 ## 训练
 
@@ -84,11 +84,11 @@ python scripts/check_setup.py --stage evaluate --model-path checkpoints/RN50.pt 
 python scripts/compare_neu.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --rtpt-template tip --val-per-class 60 --test-per-class 90 --seed 0 --output outputs/neu_comparison.json
 ```
 
-然后以 24 个视图评估伽马＋对比度缓存引导 R-TPT；四种条件为强变暗、强变亮、局部反光及强变亮叠加反光：
+然后以 24 个视图评估伽马＋对比度缓存引导 R-TPT；五种条件为强变暗、强变亮、局部反光、强变暗叠加反光及强变亮叠加反光：
 
 ```powershell
-python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 0 --conditions dark_strong bright_strong glare bright_glare --candidates gamma_contrast --output outputs/lighting_val.json
-python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split test --per-class 90 --seed 0 --conditions dark_strong bright_strong glare bright_glare --candidates gamma_contrast --output outputs/lighting_test.json
+python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split val --per-class 60 --seed 0 --conditions dark_strong bright_strong glare dark_glare bright_glare --candidates gamma_contrast --output outputs/lighting_val.json
+python scripts/search_lighting.py --model-path checkpoints/RN50.pt --cache-weights outputs/tip_f_val_selected_16shot_seed1.pt --split test --per-class 90 --seed 0 --conditions dark_strong bright_strong glare dark_glare bright_glare --candidates gamma_contrast --output outputs/lighting_test.json
 ```
 
 所有入口默认读取 `third_party/R-TPT`、`third_party/Tip-Adapter`、`data/NEU-CLS` 和 `outputs/cache/NEU-CLS`。可用 `--rtpt-root`、`--tip-root`、`--data-root`、`--cache-dir` 指向其他位置。`--model-path` 指向 RN50 权重文件。
