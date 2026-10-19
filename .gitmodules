@@ -1,0 +1,6 @@
+[submodule "third_party/R-TPT"]
+	path = third_party/R-TPT
+	url = https://github.com/TomSheng21/R-TPT.git
+[submodule "third_party/Tip-Adapter"]
+	path = third_party/Tip-Adapter
+	url = https://github.com/gaopengcuhk/Tip-Adapter.git

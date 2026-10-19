@@ -16,7 +16,7 @@ Tip-F 的静态文本分支用冻结的 RN50 CLIP 文本编码器分别编码六
 
 测试时只更新这 3 个上下文向量。类别名、固定后缀、CLIP 文本编码器、图像编码器和 Tip-F 适配器均不随待测样本更新。下一张图像处理前，上下文回到 `a photo of` 的初始化向量。
 
-实现见 [`compare_neu.py`](../scripts/compare_neu.py) 的 `set_tip_prompt`、`tune`，以及 R-TPT 原仓库的 `clip/custom_clip.py` 中的 `PromptLearner`。
+实现见 [`experiment.py`](../src/experiment.py) 的 `set_tip_prompt`、`tune`，以及 [R-TPT 子模块](../third_party/R-TPT/clip/custom_clip.py)中的 `PromptLearner`。
 
 ## 2. 图像端
 
@@ -43,7 +43,7 @@ Tip-F 的静态文本分支用冻结的 RN50 CLIP 文本编码器分别编码六
 
 每轮只在验证集上计算准确率，准确率相同时用较低交叉熵损失打破平局。选中的第 20 轮在训练阶段固定系数（`β=1, α=3`）下，验证准确率为 95.83%。保存该轮适配器权重到 `outputs/tip_f_val_selected_16shot_seed1.pt`。这个实现使用 float32 适配器，与原 Tip-Adapter `main.py` 的半精度训练不完全相同；也没有使用其按测试准确率选训练轮次的做法。
 
-随后固定适配器，在**完整验证集**的预计算图像特征上网格搜索融合系数：`β` 的 200 个点覆盖 `0.1–12`，`α` 的 20 个点覆盖 `0.1–5`。得到 `β=0.6381909548`、`α=5.0`，静态 Tip-F 验证准确率为 346/360（96.11%）。搜索没有用测试集；`α=5.0` 是当前网格的上界。实现见 [`train_tip_f.py`](../scripts/train_tip_f.py) 与 [`compare_neu.py`](../scripts/compare_neu.py) 的 `select_hyperparameters`。
+随后固定适配器，在**完整验证集**的预计算图像特征上网格搜索融合系数：`β` 的 200 个点覆盖 `0.1–12`，`α` 的 20 个点覆盖 `0.1–5`。得到 `β=0.6381909548`、`α=5.0`，静态 Tip-F 验证准确率为 346/360（96.11%）。搜索没有用测试集；`α=5.0` 是当前网格的上界。实现见 [`train_tip_f.py`](../scripts/train_tip_f.py) 与 [`experiment.py`](../src/experiment.py) 的 `select_hyperparameters`。
 
 ## 4. 实际使用时怎么做
 
@@ -75,7 +75,7 @@ R-TPT 的图像相似度加权用于最终融合，而不是仅保留这 2 个�
 最终类别分数 = Σ_(i=0)^23 q_i · [CLIP_图文分数(u_i, C更新后) + α · c_i]
 ```
 
-第一视图只是确定性的原图视图，并未被强制单独决策。原版 R-TPT 的 AugMix 视图已替换为更适合本轮钢材缺陷实验的轻伽马＋对比度视图；当前实现没有做对抗图像更新。测试时重置、熵最小化和加权融合分别见 [`compare_neu.py`](../scripts/compare_neu.py) 的 `tune` 与 [`search_augmentations.py`](../scripts/search_augmentations.py) 的 `evaluate`。
+第一视图只是确定性的原图视图，并未被强制单独决策。原版 R-TPT 的 AugMix 视图已替换为更适合本轮钢材缺陷实验的轻伽马＋对比度视图；当前实现没有做对抗图像更新。测试时重置、熵最小化和加权融合分别见 [`experiment.py`](../src/experiment.py) 的 `tune` 与 [`search_augmentations.py`](../scripts/search_augmentations.py) 的 `evaluate`。
 
 ## 6. Tip-Adapter 缓存如何使用
 

@@ -5,3 +5,9 @@ tmp/
 data/
 checkpoints/
 .venv/
+cache/
+.pytest_cache/
+.ruff_cache/
+.codex/
+*.pt
+*.pth

@@ -3,67 +3,42 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import json
-import random
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 
-from compare_neu import image_path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.data import load_split
+from src.experiment import (choose_training_samples, image_path, load_tip_clip,
+                            seed_all)
+from src.paths import add_path_arguments, model_name
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tip-root", type=Path, required=True)
+    add_path_arguments(parser, rtpt=False)
     parser.add_argument("--dataset", default="NEU-CLS")
     parser.add_argument("--shots", type=int, default=16)
     parser.add_argument("--backbone", default="RN50")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=96)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--output", type=Path, default=Path("outputs/tip_f_val_selected.pt"))
+    parser.add_argument("--output", type=Path,
+                        default=Path("outputs/tip_f_val_selected_16shot_seed1.pt"))
     return parser.parse_args()
-
-
-def choose_training_samples(entries: list, shots: int, seed: int) -> list:
-    grouped = {}
-    for entry in entries:
-        grouped.setdefault(entry[1], []).append(entry)
-    rng = random.Random(seed)
-    selected = []
-    for label in sorted(grouped):
-        selected.extend(rng.sample(grouped[label], shots))
-    return selected
-
-
-def load_tip_clip(tip_root: Path):
-    clip_path = tip_root / "clip" / "__init__.py"
-    spec = importlib.util.spec_from_file_location(
-        "tip_clip", clip_path, submodule_search_locations=[str(clip_path.parent)])
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["tip_clip"] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def main() -> None:
     args = parse_args()
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    seed_all(args.seed)
 
-    dataset_root = args.tip_root / "DATA" / args.dataset
-    cache_root = args.tip_root / "caches" / args.dataset
-    with (dataset_root / "split_NEUCLS.json").open(encoding="utf-8") as source:
-        split = json.load(source)
+    dataset_root = args.data_root
+    cache_root = args.cache_dir
+    split = load_split(dataset_root)
     train_entries = choose_training_samples(split["train"], args.shots, args.seed)
     labels = torch.tensor([entry[1] for entry in train_entries], device="cuda")
     keys = torch.load(cache_root / f"keys_{args.shots}shots.pt", map_location="cpu").float().cuda()
@@ -73,7 +48,7 @@ def main() -> None:
     assert torch.equal(labels, values.argmax(1))
 
     tip_clip = load_tip_clip(args.tip_root)
-    clip_model, _ = tip_clip.load(args.backbone, device="cuda")
+    clip_model, _ = tip_clip.load(model_name(args), device="cuda")
     clip_model.eval()
     for parameter in clip_model.parameters():
         parameter.requires_grad_(False)

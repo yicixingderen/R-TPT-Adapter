@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -17,9 +16,12 @@ from torchvision.transforms import functional as TF
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.augmentations import build_augmenter
+from src.data import load_split
+from src.experiment import (choose_samples, load_tip_clip, seed_all,
+                            select_hyperparameters, set_tip_prompt)
 from src.lighting_conditions import apply_condition
-from compare_neu import choose_samples, select_hyperparameters, set_tip_prompt
-from search_augmentations import CANDIDATES, evaluate, seed_all
+from src.paths import add_path_arguments, model_name
+from search_augmentations import CANDIDATES, evaluate
 
 
 CONDITIONS = ("clean", "dim", "bright", "gamma_dark", "low_contrast",
@@ -29,8 +31,7 @@ CONDITIONS = ("clean", "dim", "bright", "gamma_dark", "low_contrast",
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rtpt-root", type=Path, required=True)
-    parser.add_argument("--tip-root", type=Path, required=True)
+    add_path_arguments(parser)
     parser.add_argument("--cache-weights", type=Path, required=True)
     parser.add_argument("--split", choices=("val", "test"), default="val")
     parser.add_argument("--per-class", type=int, default=None)
@@ -90,10 +91,9 @@ def main() -> None:
     from data.datautils import AugMixAugmenter
 
     seed_all(args.seed)
-    dataset_root = args.tip_root / "DATA" / "NEU-CLS"
-    cache_root = args.tip_root / "caches" / "NEU-CLS"
-    with (dataset_root / "split_NEUCLS.json").open(encoding="utf-8") as source:
-        split = json.load(source)
+    dataset_root = args.data_root
+    cache_root = args.cache_dir
+    split = load_split(dataset_root)
     classnames = [next(entry[2] for entry in split["train"] if entry[1] == label)
                   for label in sorted({entry[1] for entry in split["train"]})]
     checkpoint = torch.load(args.cache_weights, map_location="cpu")
@@ -103,13 +103,8 @@ def main() -> None:
     val_features = torch.load(cache_root / "val_f.pt", map_location="cpu").float().cuda()
     val_labels = torch.load(cache_root / "val_l.pt", map_location="cpu").cuda()
 
-    tip_clip_path = args.tip_root / "clip" / "__init__.py"
-    spec = importlib.util.spec_from_file_location(
-        "tip_clip", tip_clip_path, submodule_search_locations=[str(tip_clip_path.parent)])
-    tip_clip = importlib.util.module_from_spec(spec)
-    sys.modules["tip_clip"] = tip_clip
-    spec.loader.exec_module(tip_clip)
-    text_model, _ = tip_clip.load(args.backbone, device="cpu")
+    tip_clip = load_tip_clip(args.tip_root)
+    text_model, _ = tip_clip.load(model_name(args), device="cpu")
     with torch.no_grad():
         text_features = []
         for classname in classnames:
@@ -119,7 +114,7 @@ def main() -> None:
         weights = torch.stack(text_features, dim=1).cuda()
     beta, alpha, _ = select_hyperparameters(
         val_features, val_labels, weights, keys, values)
-    model = get_coop(args.backbone, classnames, 0, 3, "a_photo_of").cuda().eval()
+    model = get_coop(model_name(args), classnames, 0, 3, "a_photo_of").cuda().eval()
     set_tip_prompt(model, classnames, clip, text_model.token_embedding)
     del text_model
     for name, parameter in model.named_parameters():

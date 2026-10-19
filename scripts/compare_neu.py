@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
-import random
 import sys
-from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
@@ -18,12 +14,15 @@ from torchvision import transforms
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.augmentations import build_augmenter
+from src.data import load_split
+from src.experiment import (cache_logits, choose_samples, image_path, load_tip_clip,
+                            seed_all, select_hyperparameters, set_tip_prompt, tune)
+from src.paths import add_path_arguments, model_name
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rtpt-root", type=Path, required=True)
-    parser.add_argument("--tip-root", type=Path, required=True)
+    add_path_arguments(parser)
     parser.add_argument("--dataset", default="NEU-CLS")
     parser.add_argument("--shots", type=int, default=16)
     parser.add_argument("--cache-weights", type=Path,
@@ -43,77 +42,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path, default=Path("outputs/neu_comparison.json"))
     return parser.parse_args()
-
-
-def choose_samples(entries: list, per_class: int, seed: int) -> list:
-    grouped = defaultdict(list)
-    for entry in entries:
-        grouped[entry[1]].append(entry)
-    rng = random.Random(seed)
-    selected = []
-    for label in sorted(grouped):
-        rng.shuffle(grouped[label])
-        selected.extend(grouped[label][:per_class])
-    return selected
-
-
-def cache_logits(features: torch.Tensor, keys: torch.Tensor,
-                 values: torch.Tensor, beta: float) -> torch.Tensor:
-    affinity = features.float() @ keys
-    return torch.exp(-beta * (1.0 - affinity)) @ values
-
-
-def select_hyperparameters(features: torch.Tensor, labels: torch.Tensor,
-                           weights: torch.Tensor, keys: torch.Tensor,
-                           values: torch.Tensor) -> tuple[float, float, float]:
-    clip_logits = 100.0 * features @ weights
-    best = (-1.0, 1.0, 1.0)
-    for beta in [0.1 + i * 11.9 / 199 for i in range(200)]:
-        cache = cache_logits(features, keys, values, beta)
-        for alpha in [0.1 + i * 4.9 / 19 for i in range(20)]:
-            accuracy = (clip_logits + alpha * cache).argmax(1).eq(labels).float().mean().item()
-            if accuracy > best[0]:
-                best = (accuracy, beta, alpha)
-    return best[1], best[2], best[0]
-
-
-def image_path(dataset_root: Path, entry: list) -> Path:
-    relative = entry[0].lstrip("\\/").replace("\\", "/")
-    return dataset_root / relative
-
-
-def set_tip_prompt(model: torch.nn.Module, classnames: list,
-                   clip_module, token_embedding: torch.nn.Module) -> None:
-    """Insert Tip-Adapter's fixed class suffix after R-TPT's tunable context."""
-    learner = model.prompt_learner
-    prompts = [f"a photo of {name}, a type of steel surface defect." for name in classnames]
-    tokenized = torch.cat([clip_module.tokenize(prompt) for prompt in prompts])
-    with torch.no_grad():
-        embeddings = token_embedding(tokenized).to(device=learner.ctx.device,
-                                                   dtype=learner.dtype)
-        learner.token_prefix = embeddings[:, :1, :]
-        learner.token_suffix = embeddings[:, 1 + learner.n_ctx:, :]
-        learner.tokenized_prompts = tokenized.to(learner.ctx.device)
-
-
-def tune(model: torch.nn.Module, images: torch.Tensor, optimizer: torch.optim.Optimizer,
-         initial_state: dict, steps: int, selection_p: float,
-         cache: torch.Tensor | None = None, alpha: float = 0.0) -> None:
-    with torch.no_grad():
-        model.reset()
-    optimizer.load_state_dict(initial_state)
-    selected = None
-    for _ in range(steps):
-        logits = model(images)
-        if cache is not None:
-            logits = logits + alpha * cache
-        entropy = -(logits.softmax(1) * logits.log_softmax(1)).sum(1)
-        if selected is None:
-            selected = entropy.argsort()[:max(1, int(len(entropy) * selection_p))]
-        loss = entropy[selected].mean()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
 
 
 def evaluate(entries: list, dataset_root: Path, transform, model: torch.nn.Module,
@@ -176,15 +104,10 @@ def main() -> None:
     from clip.custom_clip import get_coop
     from data.datautils import AugMixAugmenter
 
-    torch.manual_seed(args.seed)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    dataset_root = args.tip_root / "DATA" / args.dataset
-    cache_root = args.tip_root / "caches" / args.dataset
-    with (dataset_root / "split_NEUCLS.json").open(encoding="utf-8") as source:
-        split = json.load(source)
+    seed_all(args.seed)
+    dataset_root = args.data_root
+    cache_root = args.cache_dir
+    split = load_split(dataset_root)
     classnames = [next(entry[2] for entry in split["train"] if entry[1] == label)
                   for label in sorted({entry[1] for entry in split["train"]})]
 
@@ -203,13 +126,8 @@ def main() -> None:
     test_features = torch.load(cache_root / "test_f.pt", map_location="cpu").float().cuda()
     test_labels = torch.load(cache_root / "test_l.pt", map_location="cpu").cuda()
 
-    tip_clip_path = args.tip_root / "clip" / "__init__.py"
-    spec = importlib.util.spec_from_file_location(
-        "tip_clip", tip_clip_path, submodule_search_locations=[str(tip_clip_path.parent)])
-    tip_clip = importlib.util.module_from_spec(spec)
-    sys.modules["tip_clip"] = tip_clip
-    spec.loader.exec_module(tip_clip)
-    text_model, _ = tip_clip.load(args.backbone, device="cpu")
+    tip_clip = load_tip_clip(args.tip_root)
+    text_model, _ = tip_clip.load(model_name(args), device="cpu")
     with torch.no_grad():
         text_features = []
         for classname in classnames:
@@ -228,14 +146,14 @@ def main() -> None:
     print(f"Full cached test set: {cache_variant}={cached_test_accuracy:.2f}%", flush=True)
 
     if args.rtpt_template == "tip":
-        model = get_coop(args.backbone, classnames, 0, 3, "a_photo_of").cuda().eval()
+        model = get_coop(model_name(args), classnames, 0, 3, "a_photo_of").cuda().eval()
         set_tip_prompt(model, classnames, clip, text_model.token_embedding)
         with torch.no_grad():
             prompt_weights = F.normalize(model.get_text_features().float(), dim=-1)
             agreement = F.cosine_similarity(prompt_weights, weights.T, dim=-1).min().item()
         print(f"Initial R-TPT/Tip text feature minimum cosine: {agreement:.6f}", flush=True)
     else:
-        model = get_coop(args.backbone, classnames, 0, 4, "a_photo_of_a").cuda().eval()
+        model = get_coop(model_name(args), classnames, 0, 4, "a_photo_of_a").cuda().eval()
     del text_model
     for name, parameter in model.named_parameters():
         parameter.requires_grad_("prompt_learner" in name)
